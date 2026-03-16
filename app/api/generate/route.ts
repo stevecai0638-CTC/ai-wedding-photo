@@ -1,48 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
-import {
-  removeBackgroundWithAI,
-  enhanceImage,
-  addVignette,
-  virtualTryOn,
-} from '@/lib/ai-image-processor';
 
 export async function POST(request: NextRequest) {
-  let personBuffer: Buffer | null = null;
-  let dressBuffer: Buffer | null = null;
-  let backgroundBuffer: Buffer | null = null;
-
+  console.log('=== API 被调用 ===');
+  
   try {
     const formData = await request.formData();
     const personFile = formData.get('person') as File;
     const dressFile = formData.get('dress') as File;
     const backgroundFile = formData.get('background') as File;
 
+    console.log('收到请求，文件:', {
+      person: personFile?.name,
+      dress: dressFile?.name,
+      background: backgroundFile?.name
+    });
+
     if (!personFile || !dressFile || !backgroundFile) {
+      console.log('错误: 缺少文件');
       return NextResponse.json(
-        { error: '请上传所有三张图片（人物、婚纱、背景）' },
+        { error: '请上传所有三张图片' },
         { status: 400 }
       );
     }
 
     // 读取图片
-    personBuffer = Buffer.from(await personFile.arrayBuffer());
-    dressBuffer = Buffer.from(await dressFile.arrayBuffer());
-    backgroundBuffer = Buffer.from(await backgroundFile.arrayBuffer());
+    const personBuffer = Buffer.from(await personFile.arrayBuffer());
+    const dressBuffer = Buffer.from(await dressFile.arrayBuffer());
+    const backgroundBuffer = Buffer.from(await backgroundFile.arrayBuffer());
 
-    console.log('开始处理图片...');
-    console.log('- 人物图片大小:', personBuffer.length);
-    console.log('- 婚纱图片大小:', dressBuffer.length);
-    console.log('- 背景图片大小:', backgroundBuffer.length);
+    console.log('图片大小:', {
+      person: personBuffer.length,
+      dress: dressBuffer.length,
+      background: backgroundBuffer.length
+    });
 
-    // 使用本地算法处理图片（不需要任何API密钥）
-    const resultBuffer = await processImagesWithAI(
+    // 简化的处理逻辑
+    const resultBuffer = await processImagesSimple(
       personBuffer,
       dressBuffer,
       backgroundBuffer
     );
 
-    console.log('图片处理完成，结果大小:', resultBuffer.length);
+    console.log('处理完成，结果大小:', resultBuffer.length);
 
     return new NextResponse(resultBuffer as unknown as BodyInit, {
       headers: {
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Error processing images:', error);
+    console.error('严重错误:', error);
     return NextResponse.json(
       { error: `生成失败: ${error instanceof Error ? error.message : '未知错误'}` },
       { status: 500 }
@@ -58,19 +58,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processImagesWithAI(
+async function processImagesSimple(
   personBuffer: Buffer,
   dressBuffer: Buffer,
   backgroundBuffer: Buffer
 ): Promise<Buffer> {
-  console.log('步骤1: 去除背景...');
-  
-  // 步骤1：去除人物背景（使用本地算法，100%可用）
-  const processedPerson = await removeBackgroundWithAI(personBuffer);
+  console.log('开始处理...');
 
-  console.log('步骤2: 获取背景尺寸...');
-  
-  // 步骤2：获取背景图片尺寸
+  // 获取背景尺寸
   const background = sharp(backgroundBuffer);
   const backgroundMeta = await background.metadata();
   const targetWidth = backgroundMeta.width || 800;
@@ -78,55 +73,44 @@ async function processImagesWithAI(
 
   console.log(`目标尺寸: ${targetWidth}x${targetHeight}`);
 
-  console.log('步骤3: 调整人物大小...');
-  
-  // 步骤3：调整人物大小
-  const personResized = await sharp(processedPerson)
+  // 调整人物大小
+  const personResized = await sharp(personBuffer)
     .resize(Math.round(targetWidth * 0.5), null, {
       fit: 'inside',
     })
     .toBuffer();
 
-  // 步骤4：获取调整后的人物尺寸
   const personMeta = await sharp(personResized).metadata();
   const personWidth = personMeta.width || 300;
   const personHeight = personMeta.height || 400;
 
-  // 步骤5：计算人物位置（居中偏下）
+  // 计算位置
   const personX = Math.round((targetWidth - personWidth) / 2);
   const personY = Math.round(targetHeight - personHeight + 30);
 
-  console.log(`人物位置: (${personX}, ${personY}), 尺寸: ${personWidth}x${personHeight}`);
+  console.log(`人物位置: (${personX}, ${personY})`);
 
-  console.log('步骤4: 应用婚纱效果...');
-  
-  // 步骤6：应用虚拟试衣效果
-  const personWithDress = await virtualTryOn(personResized, dressBuffer);
-
-  console.log('步骤5: 合成到背景...');
-  
-  // 步骤7：合成到背景上
-  let composite = await background
+  // 简单合成
+  let result = await background
     .composite([
       {
-        input: personWithDress,
+        input: personResized,
         left: personX,
         top: personY,
       },
     ])
     .toBuffer();
 
-  console.log('步骤6: 增强色调...');
-  
-  // 步骤8：增强图像质量（暖色调滤镜）
-  composite = await enhanceImage(composite);
-
-  console.log('步骤7: 添加暗角效果...');
-  
-  // 步骤9：添加暗角效果
-  composite = await addVignette(composite, targetWidth, targetHeight);
+  // 应用滤镜
+  result = await sharp(result)
+    .modulate({
+      brightness: 1.08,
+      saturation: 1.15,
+    })
+    .linear(1.05, 15)
+    .toBuffer();
 
   console.log('处理完成！');
   
-  return composite;
+  return result;
 }
